@@ -1,4 +1,5 @@
 from collections import namedtuple, OrderedDict
+import logging
 
 image = namedtuple('image',
                    'image_dos_header, image_nt_headers, section_headers')
@@ -82,6 +83,7 @@ def parse_all(file_raw, structure, mapping, offset_to_structure):
 
 
 def pe_dos_header(file_raw, offset_raw=0x00):
+    logging.info('Parsing dos_header...')
     mapping = OrderedDict([
         (0x00, pe_word),  # e_magic
         (0x3c, pe_dword)  # e_lfanew
@@ -107,10 +109,12 @@ def pe_data_dir(file_raw, offset_raw):
         (0x00, pe_dword),
         (0x04, pe_dword)
     ])
+    logging.info('\tParsing data directory at ' + hex(offset_raw))
     return parse_all(file_raw, image_data_directory, mapping, offset_raw)
 
 
 def pe_data_directories(file_raw, offset_raw):
+    logging.info('Parsing data directories...')
     return [pe_data_dir(file_raw, offset_raw + 0x08*i) for i in range(16)]
 
 
@@ -148,6 +152,7 @@ def pe_optional_header32(file_raw, offset_raw):
         (0x5c, pe_dword),
         (0x60, pe_data_directories)
     ])
+    logging.info('Parsing PE32 optional_header at ' + hex(offset_raw))
     return parse_all(file_raw, image_optional_header32, mapping, offset_raw)
 
 
@@ -184,16 +189,21 @@ def pe_optional_header64(file_raw, offset_raw):
         (0x6c, pe_dword),
         (0x70, pe_data_directories)
     ])
+    logging.info('Parsing PE32+'
+                 ' optional_header at ' + hex(offset_raw))
     return parse_all(file_raw, image_optional_header64, mapping, offset_raw)
 
 
 def pe_optional_header(file_raw, offset_raw):
     magic = pe_word(file_raw, offset_raw)
     if magic == 0x010b:
+        logging.info('Detected PE format: PE32 (magic=0x010b)')
         return pe_optional_header32
     elif magic == 0x020b:
+        logging.info('Detected PE format: PE32 (magic=0x020b)')
         return pe_optional_header64
     else:
+        logging.critical('Unknown value in optional_header.magic: ' + hex(magic))
         raise TypeError
 
 
@@ -210,10 +220,12 @@ def pe_section_header(file_raw, offset_raw):
         (0x22, pe_word),
         (0x24, pe_dword)
     ])
+    logging.info('\tParsing section header at ' + hex(offset_raw))
     return parse_all(file_raw, image_section_header, mapping, offset_raw)
 
 
 def pe_section_headers(file_raw, number_of_sections, offset_raw):
+    logging.info('Parsing section_headers at ' + hex(offset_raw))
     return [pe_section_header(file_raw, offset_raw + 0x28*i) for i in range(number_of_sections)]
 
 
@@ -223,16 +235,25 @@ def pe_nt_headers(file_raw, e_lfanew):
         (0x04, pe_file_header),
         (0x18, pe_optional_header(file_raw, e_lfanew + 0x18))  # pe_optional_header - wrapper to other concrete fetcher
     ])
+    logging.info('Parsing nt_headers at ' + hex(e_lfanew))
     return parse_all(file_raw, image_nt_headers, mapping, e_lfanew)
 
 
 def parse_pe(file_raw):
+    logging.basicConfig(format='[%(levelname)s]\t%(message)s', level=logging.INFO)
+    logging.info('Started basic parsing PE file...')
     dos_header = pe_dos_header(file_raw)
+    logging.info('dos_header parsed well! e_lfanew = ' + hex(dos_header.e_lfanew))
     nt_headers = pe_nt_headers(file_raw, dos_header.e_lfanew)
-    sections_offset = pe_dos_header(file_raw).e_lfanew + 0x04 + 0x14 \
+    logging.info('nt_headers parsed well')
+    logging.info('Found %i section headers', nt_headers.image_file_header.number_of_sections)
+    sections_offset = dos_header.e_lfanew + 0x04 + 0x14 \
         + nt_headers.image_file_header.size_of_optional_header
 
     section_headers = pe_section_headers(file_raw,
                                          nt_headers.image_file_header.number_of_sections,
                                          sections_offset)
+    logging.info('Section headers parsed well.')
+    logging.info('Basic parsing is finished.')
     return image(dos_header, nt_headers, section_headers)
+
