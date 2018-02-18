@@ -2,13 +2,13 @@ from collections import namedtuple, OrderedDict
 import logging
 
 image = namedtuple('image',
-                   'image_dos_header, image_nt_headers, section_headers')
+                   'dos_header, nt_headers, section_headers')
 
 image_dos_header = namedtuple('image_dos_header',
                               'e_magic, e_lfanew')
 
 image_nt_headers = namedtuple('image_nt_headers',
-                              ['signature', 'image_file_header', 'image_optional_header'])
+                              ['signature', 'file_header', 'optional_header'])
 
 image_file_header = namedtuple('image_file_header',
                                'machine, number_of_sections, time_date_stamp, '
@@ -239,6 +239,28 @@ def pe_nt_headers(file_raw, e_lfanew):
     return parse_all(file_raw, image_nt_headers, mapping, e_lfanew)
 
 
+def align_down(value, align):
+    return value & ~(align-1)
+
+
+def align_up(value, align):
+    return align_down(value-1, align) + align
+
+
+def rva_to_raw(image, rva):
+    if rva < image.nt_headers.optional_header.size_of_headers:
+        return rva
+
+    for sect in image.section_headers:
+        if (rva >= sect.virtual_address) and \
+                (rva < sect.virtual_address + align_up(sect.virtual_size, image.nt_headers.optional_header.section_alignment)):
+            print(hex(rva), 'is in', sect.name)
+            return rva - sect.virtual_address + sect.pointer_to_raw_data
+
+    logging.critical("Can't resolve rva " + hex(rva))
+    exit(-1)
+
+
 def parse_pe(file_raw):
     logging.basicConfig(format='[%(levelname)s]\t%(message)s', level=logging.INFO)
     logging.info('Started basic parsing PE file...')
@@ -246,12 +268,12 @@ def parse_pe(file_raw):
     logging.info('dos_header parsed well! e_lfanew = ' + hex(dos_header.e_lfanew))
     nt_headers = pe_nt_headers(file_raw, dos_header.e_lfanew)
     logging.info('nt_headers parsed well')
-    logging.info('Found %i section headers', nt_headers.image_file_header.number_of_sections)
+    logging.info('Found %i section headers', nt_headers.file_header.number_of_sections)
     sections_offset = dos_header.e_lfanew + 0x04 + 0x14 \
-        + nt_headers.image_file_header.size_of_optional_header
+        + nt_headers.file_header.size_of_optional_header
 
     section_headers = pe_section_headers(file_raw,
-                                         nt_headers.image_file_header.number_of_sections,
+                                         nt_headers.file_header.number_of_sections,
                                          sections_offset)
     logging.info('Section headers parsed well.')
     logging.info('Basic parsing is finished.')
